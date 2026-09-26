@@ -1,0 +1,309 @@
+/*
+ * Material Design 3, written against the specification rather than pulled from a component
+ * library. The reason is factor II: the published Material Web bundle is not self contained, so
+ * vendoring it would still leave the browser fetching its dependencies from a content delivery
+ * network at run time, and that is a dependency no manifest declares. Implementing the design
+ * tokens directly keeps the count of run-time dependencies at zero.
+ *
+ * What is implemented here: the colour role system, the type scale, the shape scale, elevation
+ * levels and state layers, in both light and dark schemes.
+ */
+
+/* --- Colour roles, light scheme ------------------------------------------------------------ */
+:root {
+  --md-primary:            #6750a4;
+  --md-on-primary:         #ffffff;
+  --md-primary-container:  #eaddff;
+  --md-on-primary-container:#21005d;
+  --md-secondary-container:#e8def8;
+  --md-on-secondary-container:#1d192b;
+  --md-tertiary-container: #ffd8e4;
+  --md-on-tertiary-container:#31111d;
+  --md-error:              #b3261e;
+  --md-error-container:    #f9dedc;
+  --md-on-error-container: #410e0b;
+  --md-surface:            #fef7ff;
+  --md-surface-container:  #f3edf7;
+  --md-surface-container-high:#ece6f0;
+  --md-on-surface:         #1d1b20;
+  --md-on-surface-variant: #49454f;
+  --md-outline:            #79747e;
+  --md-outline-variant:    #cac4d0;
+
+  /* Shape scale */
+  --md-shape-s: 8px;
+  --md-shape-m: 12px;
+  --md-shape-l: 16px;
+  --md-shape-xl: 28px;
+  --md-shape-full: 999px;
+
+  /* Elevation */
+  --md-elev-1: 0 1px 2px rgba(0,0,0,.30), 0 1px 3px 1px rgba(0,0,0,.15);
+  --md-elev-2: 0 1px 2px rgba(0,0,0,.30), 0 2px 6px 2px rgba(0,0,0,.15);
+
+  color-scheme: light dark;
+}
+
+/* --- Colour roles, dark scheme ------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --md-primary:            #d0bcff;
+    --md-on-primary:         #381e72;
+    --md-primary-container:  #4f378b;
+    --md-on-primary-container:#eaddff;
+    --md-secondary-container:#4a4458;
+    --md-on-secondary-container:#e8def8;
+    --md-tertiary-container: #633b48;
+    --md-on-tertiary-container:#ffd8e4;
+    --md-error:              #f2b8b5;
+    --md-error-container:    #8c1d18;
+    --md-on-error-container: #f9dedc;
+    --md-surface:            #141218;
+    --md-surface-container:  #211f26;
+    --md-surface-container-high:#2b2930;
+    --md-on-surface:         #e6e0e9;
+    --md-on-surface-variant: #cac4d0;
+    --md-outline:            #938f99;
+    --md-outline-variant:    #49454f;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  /* MD3 specifies Roboto. A system stack is used instead so that no font is fetched at run time,
+     for the same reason the components are not loaded from a network. */
+  font-family: Roboto, "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: var(--md-surface);
+  color: var(--md-on-surface);
+  line-height: 1.5;
+}
+
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 16px 48px;
+}
+
+/* --- Top bar ------------------------------------------------------------------------------- */
+.top-bar {
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+  padding: 24px 16px;
+  margin-bottom: 24px;
+}
+.top-bar__title {
+  margin: 0 auto;
+  max-width: 1100px;
+  font-size: 1.75rem;   /* headline small */
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.top-bar__subtitle {
+  margin: 4px auto 0;
+  max-width: 1100px;
+  font-size: .875rem;   /* body medium */
+  opacity: .85;
+}
+
+/* --- Search field, MD3 filled text field --------------------------------------------------- */
+.search {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+.field {
+  position: relative;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.field__input {
+  width: 100%;
+  height: 56px;
+  padding: 22px 16px 6px;
+  font: inherit;
+  color: var(--md-on-surface);
+  background: var(--md-surface-container-high);
+  border: none;
+  border-bottom: 1px solid var(--md-on-surface-variant);
+  border-radius: var(--md-shape-s) var(--md-shape-s) 0 0;
+  outline: none;
+}
+.field__input:focus {
+  border-bottom: 2px solid var(--md-primary);
+  padding-bottom: 5px;
+}
+.field__label {
+  position: absolute;
+  left: 16px;
+  top: 18px;
+  font-size: 1rem;
+  color: var(--md-on-surface-variant);
+  pointer-events: none;
+  transition: transform .15s ease, font-size .15s ease, color .15s ease;
+  transform-origin: left top;
+}
+.field__input:focus + .field__label,
+.field__input:not(:placeholder-shown) + .field__label {
+  transform: translateY(-12px);
+  font-size: .75rem;
+}
+.field__input:focus + .field__label { color: var(--md-primary); }
+
+/* --- Buttons ------------------------------------------------------------------------------- */
+.button {
+  border: none;
+  border-radius: var(--md-shape-full);
+  font: inherit;
+  font-weight: 500;
+  padding: 0 24px;
+  height: 56px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+.button--filled {
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  box-shadow: var(--md-elev-1);
+}
+/* MD3 state layer: a translucent overlay of the foreground colour on hover and press. */
+.button--filled::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: currentColor;
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.button--filled:hover::after  { opacity: .08; }
+.button--filled:active::after { opacity: .12; }
+.button--filled:disabled {
+  background: color-mix(in srgb, var(--md-on-surface) 12%, transparent);
+  color: color-mix(in srgb, var(--md-on-surface) 38%, transparent);
+  box-shadow: none;
+  cursor: default;
+}
+
+/* --- Status messages ----------------------------------------------------------------------- */
+.status {
+  margin-top: 24px;
+  padding: 16px;
+  border-radius: var(--md-shape-m);
+  font-size: .9375rem;
+}
+.status__title { font-weight: 500; margin: 0 0 4px; }
+.status__detail { margin: 0; opacity: .9; }
+
+/* An upstream failure is an error. */
+.status--error {
+  background: var(--md-error-container);
+  color: var(--md-on-error-container);
+}
+/* Our own ceiling is not: nothing is broken, the caller is being asked to wait. Showing it in
+   the error colour would tell the user the provider is down, which would be false. */
+.status--wait {
+  background: var(--md-tertiary-container);
+  color: var(--md-on-tertiary-container);
+}
+.status--info {
+  background: var(--md-surface-container);
+  color: var(--md-on-surface-variant);
+}
+
+/* --- Result meta --------------------------------------------------------------------------- */
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 24px 0 12px;
+  font-size: .875rem;
+  color: var(--md-on-surface-variant);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--md-shape-s);
+  border: 1px solid var(--md-outline-variant);
+  font-size: .8125rem;
+  white-space: nowrap;
+}
+.chip--hit  { background: var(--md-secondary-container); color: var(--md-on-secondary-container); border-color: transparent; }
+.chip--miss { background: transparent; }
+
+/* --- Result cards, MD3 elevated card ------------------------------------------------------- */
+.results {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.card {
+  background: var(--md-surface-container);
+  border-radius: var(--md-shape-l);
+  box-shadow: var(--md-elev-1);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.card__media {
+  display: block;
+  width: 100%;
+  aspect-ratio: 268 / 391;
+  object-fit: contain;
+  background: var(--md-surface-container-high);
+}
+.card__body { padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+.card__title {
+  margin: 0;
+  font-size: 1rem;      /* title medium */
+  font-weight: 500;
+}
+.card__type {
+  margin: 0;
+  font-size: .8125rem;
+  color: var(--md-on-surface-variant);
+}
+.card__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+.stat {
+  font-size: .75rem;
+  padding: 2px 10px;
+  border-radius: var(--md-shape-full);
+  background: var(--md-surface-container-high);
+  color: var(--md-on-surface-variant);
+}
+.card__desc {
+  margin: 0;
+  font-size: .8125rem;
+  color: var(--md-on-surface-variant);
+}
+
+/* --- Footer -------------------------------------------------------------------------------- */
+.footer {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 16px 40px;
+  font-size: .75rem;
+  color: var(--md-on-surface-variant);
+}
+
+/* --- Small screens ------------------------------------------------------------------------- */
+@media (max-width: 600px) {
+  .top-bar { padding: 16px; }
+  .top-bar__title { font-size: 1.375rem; }
+  .search { gap: 8px; }
+  .button { width: 100%; }
+  .results { grid-template-columns: 1fr; gap: 12px; }
+  .card { flex-direction: row; }
+  .card__media { width: 108px; flex: 0 0 108px; aspect-ratio: auto; }
+  .card__body { padding: 12px; }
+}

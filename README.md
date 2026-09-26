@@ -187,6 +187,47 @@ project rather than to a framework default.
 
 ---
 
+## Frontend
+
+A static page served by this service from `src/main/resources/static`, at `/`. It searches by
+name, shows results as cards with image, name, type, attribute, level, ATK and DEF where they
+apply, and the card text.
+
+Card images are taken from the `image` object in the API response, which always points back at
+this service. The browser never learns the upstream image host exists.
+
+The page also reports whether the answer came from this service's cache or from a call to the
+provider, read from the `X-Cache` response header. That is a deliberate choice rather than
+decoration: the caching behaviour is the part of this design most worth seeing, and a chip that
+changes from "Fetched from the card API" to "Served from this service's cache" on the second
+identical search demonstrates it better than any amount of prose.
+
+The four error statuses are presented differently, and the 503 is not presented as a failure.
+An upstream problem is shown in the error colour; a rate limit refusal is shown in a neutral
+colour with the wait time, because nothing is broken and telling the user the provider is down
+would be false.
+
+### Material Design 3 without a build chain
+
+Implemented directly against the Material Design 3 specification in one stylesheet: the colour
+role system in light and dark, the type scale, the shape scale, elevation levels and state
+layers. No component library is loaded.
+
+That was not the first choice. The intent was to vendor the published Material Web bundle at a
+pinned version, which would have kept a declared dependency without adding npm. The bundle turns
+out not to be self contained: the distributed build still imports `lit` and `tslib` from absolute
+content delivery network paths, so vendoring the file would have left the browser fetching
+dependencies at run time anyway. Since the point of vendoring was to remove exactly that, and
+rewriting the import graph by hand would be building a second build chain, the tokens were
+implemented directly instead.
+
+The result is stronger for factor II than either option considered: the page loads **no script,
+stylesheet or font from anywhere but this service**, so its run-time dependency count is zero and
+there is nothing left to declare. MD3 specifies Roboto and a system font stack is used instead,
+for the same reason.
+
+---
+
 ## Configuration
 
 Every value is read from an environment variable with a fallback, in the form

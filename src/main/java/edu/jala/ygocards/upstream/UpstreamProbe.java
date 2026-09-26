@@ -31,10 +31,18 @@ import org.springframework.web.client.RestClient;
  * answer stays honest. Only a caller arriving before any result exists at all waits for the
  * probe in flight, because there is nothing older to give it.
  *
- * <h2>The probe does not take a rate limiter permit</h2>
- * It is already self limiting: at most one call per time to live, whatever the traffic. Making
- * health checks compete with user requests for permits would mean a busy service starts
- * reporting itself unable to reach an upstream that is answering normally.
+ * <h2>The probe counts against the outbound budget, but is never refused by it</h2>
+ * Every call this service makes to the provider goes through the same limiter, including this
+ * one. Leaving one route uncounted would make the claim that outbound traffic is controlled
+ * false in a small way, and a claim that is false in a small way is still false.
+ *
+ * <p>The refusal path is different from the one user requests take, though. A user request that
+ * cannot get a permit is answered with 503, because the caller can retry. A health probe that
+ * cannot get a permit must not fail, because failing it would report the upstream as unreachable
+ * on the strength of our own ceiling, and an orchestrator acting on that would restart a healthy
+ * process. A self inflicted outage is a worse outcome than a slightly stale answer, so a refused
+ * probe returns the last known result marked {@code stale} instead. Only when no result has ever
+ * been obtained is the honest answer {@code unknown}, which is neither up nor down.
  */
 @Component
 public class UpstreamProbe {
@@ -43,12 +51,17 @@ public class UpstreamProbe {
 
     private final RestClient restClient;
     private final UpstreamProperties properties;
+    private final UpstreamRateLimiter rateLimiter;
     private final AtomicReference<Result> last = new AtomicReference<>();
     private final ReentrantLock probeLock = new ReentrantLock();
 
-    public UpstreamProbe(RestClient upstreamRestClient, UpstreamProperties properties) {
+    public UpstreamProbe(
+            RestClient upstreamRestClient,
+            UpstreamProperties properties,
+            UpstreamRateLimiter rateLimiter) {
         this.restClient = upstreamRestClient;
         this.properties = properties;
+        this.rateLimiter = rateLimiter;
     }
 
     /** Returns a usable probe result, calling the upstream only when one caller needs to. */
@@ -64,9 +77,7 @@ public class UpstreamProbe {
                 if (refreshedMeanwhile != null && !isExpired(refreshedMeanwhile)) {
                     return new Outcome(refreshedMeanwhile, Source.CACHE);
                 }
-                Result fresh = probe();
-                last.set(fresh);
-                return new Outcome(fresh, Source.PROBE);
+                return probeUnderLock();
             } finally {
                 probeLock.unlock();
             }
@@ -85,12 +96,34 @@ public class UpstreamProbe {
             if (afterWaiting != null) {
                 return new Outcome(afterWaiting, Source.CACHE);
             }
-            Result fresh = probe();
-            last.set(fresh);
-            return new Outcome(fresh, Source.PROBE);
+            return probeUnderLock();
         } finally {
             probeLock.unlock();
         }
+    }
+
+    /**
+     * Performs the call, or explains why it was not made. Always invoked holding the lock.
+     *
+     * <p>A refused permit is not an error here. See the note on the class about why a health
+     * check must not fail on this service's own ceiling.
+     */
+    private Outcome probeUnderLock() {
+        if (!rateLimiter.tryAcquire("upstream probe")) {
+            Result previous = last.get();
+            if (previous != null) {
+                log.info("Probe skipped: no outbound permit, answering with the previous result");
+                return new Outcome(previous, Source.STALE);
+            }
+            log.warn("Probe skipped: no outbound permit and nothing has ever been probed");
+            return new Outcome(
+                    new Result(false, 0, Instant.now(), "not checked: local rate limit", null, null),
+                    Source.UNKNOWN);
+        }
+
+        Result fresh = probe();
+        last.set(fresh);
+        return new Outcome(fresh, Source.PROBE);
     }
 
     private boolean isExpired(Result result) {
@@ -132,8 +165,13 @@ public class UpstreamProbe {
         PROBE,
         /** The stored result is still within its time to live. */
         CACHE,
-        /** The stored result has expired and another caller is refreshing it right now. */
-        STALE
+        /**
+         * The stored result has expired, and either another caller is refreshing it right now or
+         * no outbound permit was available. Either way this is the previous answer, not a new one.
+         */
+        STALE,
+        /** No call could be made and nothing has ever been probed, so the state is not known. */
+        UNKNOWN
     }
 
     /**

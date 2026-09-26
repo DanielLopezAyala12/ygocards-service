@@ -65,11 +65,20 @@ public class HealthController {
         upstream.put("databaseVersion", result.databaseVersion());
         upstream.put("databaseUpdatedAt", result.databaseUpdatedAt());
 
+        // Three states, not two. "Not checked" is not the same claim as "checked and down", and
+        // reporting the first as the second would be a guess presented as a measurement.
+        String status;
+        if (outcome.source() == UpstreamProbe.Source.UNKNOWN) {
+            status = "UNKNOWN";
+        } else {
+            status = result.reachable() ? "UP" : "DOWN";
+        }
+
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("status", result.reachable() ? "UP" : "DOWN");
+        body.put("status", status);
         body.put("upstream", upstream);
 
-        HttpStatus status = result.reachable() ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE;
-        return ResponseEntity.status(status).body(body);
+        HttpStatus httpStatus = "UP".equals(status) ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE;
+        return ResponseEntity.status(httpStatus).body(body);
     }
 }

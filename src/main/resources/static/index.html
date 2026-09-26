@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yu-Gi-Oh Card Search</title>
+<!--
+  No stylesheet, font or script is loaded from anywhere but this service. That is a factor II
+  decision, not an aesthetic one: anything fetched from a content delivery network at run time is
+  a dependency that no manifest declares and that no deployment pins, so the application could
+  change without anyone releasing it. See service/README.md for the Material Design 3 note.
+-->
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<header class="top-bar">
+  <h1 class="top-bar__title">Card Search</h1>
+  <p class="top-bar__subtitle">Served through a twelve-factor service over the YGOPRODeck API</p>
+</header>
+
+<main>
+  <form id="search-form" class="search" role="search">
+    <div class="field">
+      <input id="query" class="field__input" type="search" name="name"
+             placeholder=" " autocomplete="off" required>
+      <label class="field__label" for="query">Card name</label>
+    </div>
+    <button id="submit" class="button button--filled" type="submit">Search</button>
+  </form>
+
+  <section id="status" class="status" hidden aria-live="polite"></section>
+
+  <section id="meta" class="meta" hidden>
+    <span id="meta-count" class="meta__count"></span>
+    <span id="meta-cache" class="chip" title="Whether this service answered from its own cache or called the provider"></span>
+  </section>
+
+  <section id="results" class="results" aria-live="polite"></section>
+</main>
+
+<footer class="footer">
+  <p>Card data and images come from the YGOPRODeck API. Images are re-served by this service
+     rather than linked from the provider's host, as its usage guidelines ask.</p>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

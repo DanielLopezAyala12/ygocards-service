@@ -1,5 +1,6 @@
 package edu.jala.ygocards.observability;
 
+import edu.jala.ygocards.admin.AdminRunner;
 import edu.jala.ygocards.config.CacheProperties;
 import edu.jala.ygocards.config.UpstreamProperties;
 import org.slf4j.Logger;
@@ -47,7 +48,12 @@ public class StartupLogger {
     }
 
     @EventListener(ApplicationReadyEvent.class)
-    public void logEffectiveConfiguration() {
+    public void logEffectiveConfiguration(ApplicationReadyEvent event) {
+        // An admin run prints the configuration its task actually uses and then exits. Repeating
+        // the whole block after the report would bury the result the operator is reading.
+        if (event.getArgs() != null && AdminRunner.isAdminInvocation(event.getArgs())) {
+            return;
+        }
         log.info("Effective configuration for ygocards-service {}", version);
         log.info("  port                 = {}", configuredPort);
         log.info("  upstream.baseUrl     = {}", upstream.baseUrl());
