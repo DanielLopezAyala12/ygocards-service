@@ -7,8 +7,8 @@ Java 21, Spring Boot 4.1, Maven Wrapper. The service exports HTTP on a port it r
 environment, keeps no durable state, and treats the upstream API as an attached resource whose
 address is configuration rather than code.
 
-**Status: in progress.** Card search, image serving, the frontend and the container image are
-not implemented yet. What runs today is the configuration layer and the two health endpoints.
+**Status: in progress.** The backend is complete: health, card search and image serving. The
+frontend and the container image are not built yet.
 
 ---
 
@@ -68,6 +68,79 @@ some other way, or pass `--env-file .env` to `docker run` once the image exists.
 |---|---|
 | `GET /health` | Liveness. Is this process alive and serving HTTP |
 | `GET /health/upstream` | Reachability of the card API, from a probe result that may be cached |
+| `GET /api/cards?name=&limit=&offset=` | Fuzzy card search by name |
+| `GET /api/cards/{id}/image?variant=small\|full` | One card image, served from here |
+
+### Card search
+
+```bash
+curl "http://localhost:8080/api/cards?name=dark%20magician&limit=2"
+```
+
+```json
+{
+  "query": { "name": "dark magician", "limit": 2, "offset": 0 },
+  "count": 2,
+  "totalRows": 15,
+  "cache": "miss",
+  "cards": [
+    {
+      "id": 46986414,
+      "name": "Dark Magician",
+      "type": "Normal Monster",
+      "atk": 2500,
+      "def": 2100,
+      "level": 7,
+      "image": {
+        "small": "/api/cards/46986414/image?variant=small",
+        "full": "/api/cards/46986414/image?variant=full"
+      }
+    }
+  ]
+}
+```
+
+`limit` defaults to 20 and may not exceed 100. `offset` defaults to 0. Responses also carry an
+`X-Cache` header of `HIT` or `MISS`, which is the same information as the `cache` field in a form
+a proxy or a test can read without parsing the body.
+
+A query that matches nothing returns **200 with an empty list**, not 404 and not the 400 the
+upstream answers with. Finding nothing is a successful search, and translating it here keeps the
+provider's contract from leaking into every client.
+
+### Card images
+
+Image links in a search response always point back at this service. No response this service
+produces contains the upstream image host, because the provider's guidelines prohibit hotlinking
+it. The upstream URL is rebuilt from `YGO_IMAGE_BASE_URL` and the card id on each request rather
+than remembered from a search: an image endpoint that depended on a previous search would depend
+on the cache, and a cold instance would fail to serve an image it had never looked up.
+
+Images are served from a bounded in-memory cache and never written to disk. Durable image storage
+belongs in object storage reached through the environment, and is recorded as a deferred factor.
+
+### Error semantics
+
+Four different failures deserve four different answers, because the right reaction differs:
+
+| Status | Meaning | What a caller should do |
+|---|---|---|
+| `400` | The request is wrong | Fix it. Retrying unchanged will fail again |
+| `502` | The card API could not be reached or answered unusably | Nothing is wrong on either side of this call |
+| `504` | The card API accepted the call and did not answer in time | Often clears by itself, unlike 502 |
+| `503` | This service declined to call out, its own ceiling was reached | Wait. `Retry-After` says how long |
+
+The 503 case is worth separating from the rest: nothing is broken anywhere. The service is
+holding outbound traffic under the provider's limit on purpose, and saying so is more useful than
+reporting an upstream problem that does not exist.
+
+```json
+{
+  "error": "rate_limited",
+  "message": "This service is holding outbound traffic under the provider's limit. Try again shortly.",
+  "retryAfterSeconds": 1
+}
+```
 
 ### Why these are two endpoints and not one
 

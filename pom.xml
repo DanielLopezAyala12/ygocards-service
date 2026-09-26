@@ -27,6 +27,17 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
+    <!--
+      A declared, locked dependency for the cache rather than a hand written one. Factor II asks
+      for dependencies to be declared explicitly, not for them to be reimplemented: a LinkedHashMap
+      with a time to live would be our own code to get wrong, and it would not appear in any
+      manifest. Caffeine gives bounded size and expiry correctly, and the bounds stay our
+      configuration.
+    -->
+    <dependency>
+      <groupId>com.github.ben-manes.caffeine</groupId>
+      <artifactId>caffeine</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
