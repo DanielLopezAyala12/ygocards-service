@@ -437,7 +437,21 @@ traffic class that was requested rather than the one that is abundant.
 
 ## Licence and attribution
 
-Card data and card images come from the YGOPRODeck API and remain the property of their
-respective owners. The service caches upstream data locally and re-serves images through its own
-endpoint, as the provider's usage guidelines ask, and never points a browser at the upstream
-image host.
+The source code of this service is MIT licensed. See [`LICENSE`](./LICENSE).
+
+**The licence covers the code and nothing else.** Card data and card images come from the
+YGOPRODeck API and remain the property of YGOPRODeck and of the rights holders of the Yu-Gi-Oh
+trading card game. They are not the author's to license, and the `LICENSE` file says so in its
+own words rather than leaving the question to be inferred. A licence that appeared to cover
+somebody else's data would be worse than no licence at all.
+
+The service caches upstream data locally and re-serves images through its own endpoint, as the
+provider's usage guidelines ask, and never points a browser at the upstream image host.
+
+## A note on where the mapping table lives
+
+The table above is the canonical copy. The lab report at
+[`../README.md`](../README.md) carries a duplicate of it, deliberately rather than by oversight:
+the mapping is the largest single item in the lab's marking scheme, and the cost of an assessor
+not finding it outweighs the risk of the two copies drifting apart now that the code is frozen.
+If the service changes again, this copy is the one to edit first.
