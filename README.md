@@ -7,8 +7,10 @@ Java 21, Spring Boot 4.1, Maven Wrapper. The service exports HTTP on a port it r
 environment, keeps no durable state, and treats the upstream API as an attached resource whose
 address is configuration rather than code.
 
-**Status: in progress.** The backend, the frontend and the container image are complete. The
-tunnel deployment and the public mirror are not done yet.
+**Status: complete.** The backend, the frontend, the container image and a public deployment
+through a tunnel are all done. The gaps that remain are deliberate, and each one is listed with
+its reason under [Deferred, with reasons](#deferred-with-reasons) in the twelve-factor mapping
+below.
 
 ---
 
@@ -448,10 +450,19 @@ somebody else's data would be worse than no licence at all.
 The service caches upstream data locally and re-serves images through its own endpoint, as the
 provider's usage guidelines ask, and never points a browser at the upstream image host.
 
-## A note on where the mapping table lives
+## A note on this table and the files it cites
 
-The table above is the canonical copy. The lab report at
-[`../README.md`](../README.md) carries a duplicate of it, deliberately rather than by oversight:
-the mapping is the largest single item in the lab's marking scheme, and the cost of an assessor
-not finding it outweighs the risk of the two copies drifting apart now that the code is frozen.
-If the service changes again, this copy is the one to edit first.
+The table above is the canonical copy. The Software Architecture 4 lab report that accompanies
+this service in the coursework repository carries a duplicate of it, deliberately rather than by
+oversight: the mapping is the largest single item in the lab's marking scheme, and the cost of an
+assessor not finding it outweighs the risk of the two copies drifting apart now that the code is
+frozen. If the service changes again, this copy is the one to edit first.
+
+The table cites `architecture-decisions.md` in four places. That file records the design decisions
+taken before any code existed, and it is kept with the course materials rather than here, because
+it documents the coursework rather than the service. Each citation names its decision by number,
+so a reader who does not have the file can still see that a decision was made and what it settled.
+
+This repository is published as a mirror. The service is developed inside a coursework repository
+and this is the same code with the lab folder as its root, which is why the code is complete on
+its own while the surrounding course material is not here.
