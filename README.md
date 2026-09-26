@@ -7,14 +7,33 @@ Java 21, Spring Boot 4.1, Maven Wrapper. The service exports HTTP on a port it r
 environment, keeps no durable state, and treats the upstream API as an attached resource whose
 address is configuration rather than code.
 
-**Status: in progress.** The backend is complete: health, card search and image serving. The
-frontend and the container image are not built yet.
+**Status: in progress.** The backend, the frontend and the container image are complete. The
+tunnel deployment and the public mirror are not done yet.
 
 ---
 
 ## Quick start
 
 No configuration is required. Every setting has a default that works on a clean machine.
+
+### With Docker
+
+```bash
+docker build -t ygocards-service:0.1.0 .
+docker run --rm --env-file .env -p 8080:8080 ygocards-service:0.1.0
+```
+
+`docker stop` sends a real SIGTERM to the JVM, which is process 1 in the container, so the
+graceful drain runs and the container exits with code 143. That is the cleanest demonstration of
+factor IX available here, because the signal is native rather than emulated.
+
+The admin task runs from the same image:
+
+```bash
+docker run --rm --env-file .env ygocards-service:0.1.0 --admin=upstream-check
+```
+
+### Without Docker
 
 ```bash
 ./mvnw -B -DskipTests package
@@ -273,9 +292,53 @@ coordinator, which is recorded as a deferred improvement rather than claimed as 
 
 ## Twelve-factor mapping
 
-The canonical mapping table, naming for each factor whether it comes from a framework default,
-from an explicit setting, or from code written for this project, is added here when the service
-is feature complete. The lab report quotes this table rather than maintaining a second copy.
+This is the canonical table. The lab report quotes it rather than keeping a second copy that
+could drift.
+
+The **Source** column exists because a framework can satisfy several factors without anyone
+having decided anything, and taking credit for that would be dishonest. It has three values:
+
+- **Framework** the behaviour comes from Spring Boot and would be there whether or not anyone
+  thought about it.
+- **Configured** a framework capability that does nothing until someone turns it on, and someone
+  did.
+- **Written** code or files produced for this project.
+
+| # | Factor | Mechanism and where to find it | Source |
+|---|---|---|---|
+| I | Codebase | One Git repository. The source lives in the coursework repository under this lab folder; a public mirror carries the same code and supplies the public URL. Reasoning in `architecture-decisions.md`, D-06 | Configured |
+| II | Dependencies | Java dependencies declared in `pom.xml`. The build tool itself pinned to 3.9.16 by the Maven Wrapper (`.mvn/wrapper/maven-wrapper.properties`). Base images pinned to exact tags in `Dockerfile`. The frontend loads **no script, stylesheet or font from any other origin**, so its run-time dependency count is zero | Wrapper is **Framework**; the manifest, the pinned tags and the zero-dependency frontend are **Written** |
+| III | Config | Every setting is `${VAR:default}` in `application.properties`, bound into records in `config/UpstreamProperties.java` and `config/CacheProperties.java`. No class calls `System.getenv` anywhere. `.env.example` documents the full surface. `observability/StartupLogger.java` prints the resolved values at startup | Binding is **Framework**; the discipline of zero direct reads, and the startup report, are **Written** |
+| IV | Backing services | The card API is reached through `YGO_API_BASE_URL` and `YGO_IMAGE_BASE_URL`, never a compiled address. The tests point the application at a fake upstream using the same property a deployment would use to select a mirror (`src/test/java/edu/jala/ygocards/FakeUpstream.java`) | Written |
+| V | Build, release, run | Two-stage `Dockerfile`: the build stage holds the JDK, the wrapper and the sources; the runtime stage holds a JRE and one jar. Image tagged `ygocards-service:0.1.0`. The running version comes from `app.version=@project.version@`, filtered from `pom.xml` at build time, so there is one source of truth for it | Configured |
+| VI | Processes | No session state, no writes to disk. Both caches are bounded by entries and by time to live (`application/CardSearchService.java`, `application/CardImageService.java`). Images are held in memory and re-served, never written (`architecture-decisions.md`, D-05) | Written |
+| VII | Port binding | Spring Boot's embedded Tomcat exports HTTP with no external server. The only contribution here is one line, `server.port=${PORT:8080}`, so that the port is a deployment decision rather than a constant | Embedded server is **Framework**; reading `PORT` is **Configured** |
+| VIII | Concurrency | One process type, declared in `Procfile` as `web:`. Capacity is added by running more containers. No singleton work and no scheduled jobs, so nothing breaks when a second instance starts. See the limitations below for what does not scale yet | Written |
+| IX | Disposability | `server.shutdown=graceful` with `spring.lifecycle.timeout-per-shutdown-phase`. `observability/ShutdownLogger.java` makes the drain visible, since the framework prints nothing by itself. The `Dockerfile` uses exec-form `ENTRYPOINT` so the JVM is PID 1 and receives SIGTERM directly. Verified: `docker stop` produced the full drain sequence and exit code 143 | Graceful drain is **Configured**; the log line and the PID 1 arrangement are **Written** |
+| X | Dev/prod parity | The same image runs locally and anywhere else, built from the same `Dockerfile` with the same variable names. Tests exercise the real configuration path rather than a test-only one. The only environment difference is the value of the variables | Configured |
+| XI | Logs | Spring Boot writes to stdout by default, and this project adds **no file appender anywhere**. The contribution is negative and deliberate: not breaking it. What was written is the content, namely cache hits and misses, upstream latency per call, rate limiter decisions and the startup configuration block | stdout is **Framework**; the absence of a file appender is **Configured**; the log content is **Written** |
+| XII | Admin processes | `admin/AdminRunner.java` handles `--admin=upstream-check` from the same jar with the same configuration, starts no web server, and exits 0, 2 or 3. Runs as `docker run --rm --env-file .env ygocards-service:0.1.0 --admin=upstream-check` | Written |
+
+### Known limitation: request amplification against a shared ceiling
+
+One user action is not one outbound call. A search is one call, but the page then requests an
+image per card, so a single search with 24 results can produce up to 25 outbound calls against a
+ceiling of 8 per second. Measured with a cold cache: a burst of 24 image requests produced 8
+refusals in one run and 4 in another, while a burst of 15 produced none. The same action fails a
+different number of images depending on where the burst lands relative to the refill tick.
+
+The ceiling protects the provider, which is what it was for, but it distributes the cost onto the
+user unpredictably. The fix is a design decision rather than a tuning change and is still open;
+it is recorded here rather than left for a reader to discover.
+
+### Deferred, with reasons
+
+| What | Factor | Why it is not here |
+|---|---|---|
+| Durable image storage in object storage | IV, VI | The correct answer is an attached resource reached through a URL in the environment. Writing images to local disk would satisfy the provider and break factor VI, so they are held in memory instead and persistence is out of scope (`architecture-decisions.md`, D-05) |
+| Shared cache and shared outbound budget across replicas | IV, VIII | Both the cache and the rate limiter count per instance. Three replicas at eight requests per second would send twenty four and trigger the provider's block. Sharing either needs an external coordinator |
+| Named tunnel with a stable hostname | VII | The quick tunnel produces an address that disappears with the process, which is accepted in `architecture-decisions.md`, D-03. A named tunnel is the production form of the same arrangement |
+| A ceiling that accounts for amplification | VIII | See the limitation above. Open |
 
 ---
 
