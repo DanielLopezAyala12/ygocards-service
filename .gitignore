@@ -1,0 +1,4 @@
+target/
+service.pid
+*.log
+.env

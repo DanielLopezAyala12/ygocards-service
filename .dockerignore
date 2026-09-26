@@ -1,0 +1,7 @@
+target/
+.git/
+.gitignore
+*.log
+.env
+service.pid
+scripts/
