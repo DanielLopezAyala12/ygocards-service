@@ -439,13 +439,20 @@ traffic class that was requested rather than the one that is abundant.
 
 ## Licence and attribution
 
-The source code of this service is MIT licensed. See [`LICENSE`](./LICENSE).
+The source code of this service is MIT licensed. See [`LICENSE`](./LICENSE) for the licence and
+[`NOTICE`](./NOTICE) for what it does and does not cover.
 
 **The licence covers the code and nothing else.** Card data and card images come from the
 YGOPRODeck API and remain the property of YGOPRODeck and of the rights holders of the Yu-Gi-Oh
-trading card game. They are not the author's to license, and the `LICENSE` file says so in its
-own words rather than leaving the question to be inferred. A licence that appeared to cover
-somebody else's data would be worse than no licence at all.
+trading card game. They are not the author's to license, and `NOTICE` says so in its own words
+rather than leaving the question to be inferred. A licence that appeared to cover somebody else's
+data would be worse than no licence at all.
+
+The scope note is a separate file rather than a section appended to `LICENSE`, and the reason is
+practical. Automated licence detection compares a licence file against the canonical wording of
+each known licence, so extra paragraphs make the project report as carrying a custom licence
+instead of MIT. Keeping `LICENSE` to the canonical text and the scope in `NOTICE` says the same
+thing while remaining machine readable.
 
 The service caches upstream data locally and re-serves images through its own endpoint, as the
 provider's usage guidelines ask, and never points a browser at the upstream image host.

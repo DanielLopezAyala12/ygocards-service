@@ -19,16 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-SCOPE OF THIS LICENCE
-
-This licence covers the source code of ygocards-service and nothing else.
-
-It does not cover, and cannot grant any right to, the card data and card images
-this service retrieves from the YGOPRODeck API. Those remain the property of
-YGOPRODeck and of the respective rights holders of the Yu-Gi-Oh trading card
-game, and their use is governed by the provider's own terms rather than by this
-file. Nothing here may be read as licensing data that is not the author's to
-license.
