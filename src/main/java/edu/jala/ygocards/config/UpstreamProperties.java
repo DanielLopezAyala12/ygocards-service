@@ -24,12 +24,18 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param probeTtl        how long a probe result stays usable before another call is made.
  *                        This exists so that polling the health endpoint cannot consume the
  *                        upstream request budget it is meant to protect.
- * @param rateLimitPerSecond outbound request ceiling. The upstream contract allows 20 per
- *                        second and blocks the caller for an hour beyond that, so the default
- *                        sits well under the limit: the margin is cheap and the penalty is not.
- * @param rateLimitWait   how long a request may wait for a permit before the service gives up
- *                        and answers 503. Queueing without a bound would turn a burst into
- *                        exhausted request threads, which is an outage rather than a delay.
+ * @param rateLimitSearchPerSecond outbound ceiling for card searches. A search is requested by a
+ *                        person and produces exactly one upstream call, so it needs a small
+ *                        budget that is reliably available rather than a large one.
+ * @param rateLimitSearchWait how long a search may wait for a permit before the service answers
+ *                        503. Kept short: a user is watching, and a spinner that hangs is worse
+ *                        than an honest failure they can act on.
+ * @param rateLimitImagePerSecond outbound ceiling for card images. One search produces up to
+ *                        twenty four image requests, so this is the class that actually consumes
+ *                        the budget and it gets its own rather than competing with searches.
+ * @param rateLimitImageWait how long an image may wait. Much longer than a search, because the
+ *                        user is not watching any particular image, they are idempotent and
+ *                        cacheable, and one missing image degrades one card out of a page.
  * @param connectTimeout  TCP connect timeout for upstream calls
  * @param readTimeout     response read timeout for upstream calls
  */
@@ -39,10 +45,17 @@ public record UpstreamProperties(
         String imageBaseUrl,
         String probePath,
         Duration probeTtl,
-        int rateLimitPerSecond,
-        Duration rateLimitWait,
+        int rateLimitSearchPerSecond,
+        Duration rateLimitSearchWait,
+        int rateLimitImagePerSecond,
+        Duration rateLimitImageWait,
         Duration connectTimeout,
         Duration readTimeout) {
+
+    /** Combined outbound ceiling, which must stay under what the provider allows. */
+    public int rateLimitTotalPerSecond() {
+        return rateLimitSearchPerSecond + rateLimitImagePerSecond;
+    }
 
     /** Upstream URL for the full size image of a card. */
     public String fullImageUrl(long cardId) {

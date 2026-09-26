@@ -1,93 +1,94 @@
 package edu.jala.ygocards.upstream;
 
 import edu.jala.ygocards.config.UpstreamProperties;
-import jakarta.annotation.PreDestroy;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
+import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Keeps outbound traffic under the ceiling the upstream provider publishes.
+ * Keeps outbound traffic under the ceiling the upstream provider publishes, with a separate
+ * budget for each class of traffic.
  *
- * <p>The provider allows 20 requests per second and blocks the caller for an hour beyond that.
- * Respecting that is the consumer's job: the provider enforces it by blocking, and only the
- * client can avoid triggering it. A permit is released back up to the configured rate once a
- * second, so a burst is smoothed instead of being sent all at once.
+ * <h2>Why two budgets and not one</h2>
+ * A search and an image are not the same kind of call, and a single counter treats them as if
+ * they were. One search produces one outbound call, and the page it returns then asks for one
+ * image per card, so the two classes stand in a ratio of roughly one to twenty four. Sharing a
+ * counter between them guarantees that the abundant class crowds out the scarce one: measured
+ * against a single ceiling of eight per second, every refusal in the log was an image and none
+ * was a search, and that was luck rather than design. With a different arrival order the user
+ * would have lost the search they asked for so that images could load.
  *
- * <p>Waiting is bounded on purpose. A caller that queued indefinitely would hold a request
- * thread for as long as the burst lasted, so a spike in traffic would exhaust the thread pool
- * and take the service down. Giving up after a short wait and answering 503 with
- * {@code Retry-After} turns that outage into a delay the caller can act on.
+ * <p>The two classes also deserve different patience, for a reason that has nothing to do with
+ * volume. A search was requested by a person who is waiting for it, so it needs a small budget
+ * that is reliably there, and a short wait, because a spinner that hangs is worse than an honest
+ * failure. An image is derived from that search, the user is not watching any particular one of
+ * them, they are idempotent and cacheable for an hour, and a missing one degrades a single card
+ * out of twenty four. So an image can afford to wait much longer than a search.
  *
  * <h2>Known limitation</h2>
- * This limiter counts requests inside one process. Three replicas configured at eight requests
- * per second would together send twenty four and trigger the block. Sharing a budget across
- * replicas needs an external coordinator, which is recorded as a deferred improvement rather
- * than claimed as solved.
+ * Both budgets count inside one process. Two replicas configured at three searches and nine
+ * images per second would together send twenty four, which is over the provider's ceiling. There
+ * are now two limits that are not shared between replicas rather than one, so scaling out still
+ * needs an external coordinator. This is recorded as a deferred improvement rather than claimed
+ * as solved.
  */
 @Component
 public class UpstreamRateLimiter {
 
     private static final Logger log = LoggerFactory.getLogger(UpstreamRateLimiter.class);
 
-    private final int permitsPerSecond;
-    private final long waitMillis;
-    private final Semaphore permits;
-    private final ScheduledExecutorService refill;
+    private final TokenBucket searchBucket;
+    private final TokenBucket imageBucket;
+    private final Duration searchWait;
+    private final Duration imageWait;
+    private final int searchPerSecond;
+    private final int imagePerSecond;
 
     public UpstreamRateLimiter(UpstreamProperties properties) {
-        this.permitsPerSecond = properties.rateLimitPerSecond();
-        this.waitMillis = properties.rateLimitWait().toMillis();
-        this.permits = new Semaphore(permitsPerSecond);
-        this.refill = Executors.newSingleThreadScheduledExecutor(runnable -> {
-            Thread thread = new Thread(runnable, "upstream-rate-limiter");
-            thread.setDaemon(true);
-            return thread;
-        });
-        this.refill.scheduleAtFixedRate(this::topUp, 1, 1, TimeUnit.SECONDS);
+        this.searchPerSecond = properties.rateLimitSearchPerSecond();
+        this.imagePerSecond = properties.rateLimitImagePerSecond();
+        this.searchWait = properties.rateLimitSearchWait();
+        this.imageWait = properties.rateLimitImageWait();
+        this.searchBucket = new TokenBucket(searchPerSecond);
+        this.imageBucket = new TokenBucket(imagePerSecond);
+    }
+
+    /** A card search, which a person is waiting for. */
+    public TokenBucket.Outcome forSearch() {
+        return take(searchBucket, searchWait, "card search", searchPerSecond);
+    }
+
+    /** A card image, derived from a search and tolerant of a longer wait. */
+    public TokenBucket.Outcome forImage() {
+        return take(imageBucket, imageWait, "card image", imagePerSecond);
     }
 
     /**
-     * Takes one permit, waiting up to the configured limit.
+     * The health probe, which draws on the search budget.
      *
-     * @return true when the call may proceed, false when the caller should be told to retry
+     * <p>It belongs with searches rather than with images because it is low volume and low
+     * latency by nature, and giving it a third budget would be precision without a purpose: at
+     * one call per probe time to live it cannot exhaust anything. A refused probe is never an
+     * error, which {@link UpstreamProbe} handles.
      */
-    public boolean tryAcquire(String what) {
-        try {
-            boolean granted = permits.tryAcquire(waitMillis, TimeUnit.MILLISECONDS);
-            if (granted) {
-                log.debug("Rate limiter granted a permit for {} ({} of {} left)",
-                        what, permits.availablePermits(), permitsPerSecond);
-            } else {
-                log.warn("Rate limiter denied {} after waiting {}ms: {} requests/second ceiling reached",
-                        what, waitMillis, permitsPerSecond);
-            }
-            return granted;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.warn("Rate limiter wait for {} was interrupted", what);
-            return false;
+    public TokenBucket.Outcome forProbe() {
+        return take(searchBucket, searchWait, "upstream probe", searchPerSecond);
+    }
+
+    private TokenBucket.Outcome take(TokenBucket bucket, Duration maxWait, String what, int rate) {
+        TokenBucket.Outcome outcome = bucket.acquire(maxWait);
+
+        if (!outcome.granted()) {
+            log.warn("Rate limiter denied {}: would have waited {}ms against a budget of {}ms, "
+                            + "{} requests/second ceiling for this class",
+                    what, outcome.waitMillis(), maxWait.toMillis(), rate);
+        } else if (outcome.waitNanos() > 0) {
+            log.info("Rate limiter delayed {} by {}ms to stay under {} requests/second",
+                    what, outcome.waitMillis(), rate);
+        } else {
+            log.debug("Rate limiter granted {} immediately", what);
         }
-    }
-
-    /** How long a denied caller should be told to wait, in whole seconds, never below one. */
-    public long retryAfterSeconds() {
-        return 1;
-    }
-
-    private void topUp() {
-        int missing = permitsPerSecond - permits.availablePermits();
-        if (missing > 0) {
-            permits.release(missing);
-        }
-    }
-
-    @PreDestroy
-    void shutdown() {
-        refill.shutdownNow();
+        return outcome;
     }
 }

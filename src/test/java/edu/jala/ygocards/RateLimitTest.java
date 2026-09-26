@@ -22,15 +22,17 @@ import org.springframework.test.context.DynamicPropertySource;
  * Checks that the outbound ceiling is enforced, and that hitting it is reported as a wait rather
  * than as a provider failure.
  *
- * <p>The ceiling is set to one request per second here through configuration, which is the same
- * mechanism a deployment would use. Saturating the real default of eight would need a burst large
- * enough to make the test slow and flaky for no extra confidence.
+ * <p>Both ceilings are set to one request per second here through configuration, which is the same
+ * mechanism a deployment would use. Saturating the real defaults would need a burst large
+ * enough to make the test slow for no extra confidence.
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
-                "ygo.upstream.rate-limit-per-second=1",
-                "ygo.upstream.rate-limit-wait=1ms"
+                "ygo.upstream.rate-limit-search-per-second=1",
+                "ygo.upstream.rate-limit-search-wait=1ms",
+                "ygo.upstream.rate-limit-image-per-second=1",
+                "ygo.upstream.rate-limit-image-wait=1ms"
         })
 class RateLimitTest {
 

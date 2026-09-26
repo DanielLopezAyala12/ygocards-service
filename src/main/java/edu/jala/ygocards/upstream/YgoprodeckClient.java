@@ -54,7 +54,7 @@ public class YgoprodeckClient {
 
     /** Fuzzy search by name. Returns an empty page when nothing matches. */
     public SearchResult search(SearchQuery query) {
-        acquirePermitOrFail("card search");
+        acquirePermitOrFail(rateLimiter.forSearch(), "card search");
 
         URI target = URI.create(properties.baseUrl()
                 + "/cardinfo.php?fname=" + URLEncoder.encode(query.name(), StandardCharsets.UTF_8)
@@ -97,7 +97,7 @@ public class YgoprodeckClient {
 
     /** Fetches one card image from the upstream host. */
     public CardImage fetchImage(long cardId, ImageVariant variant) {
-        acquirePermitOrFail("card image");
+        acquirePermitOrFail(rateLimiter.forImage(), "card image");
 
         URI target = URI.create(variant == ImageVariant.SMALL
                 ? properties.smallImageUrl(cardId)
@@ -131,10 +131,10 @@ public class YgoprodeckClient {
         }
     }
 
-    private void acquirePermitOrFail(String what) {
-        if (!rateLimiter.tryAcquire(what)) {
+    private void acquirePermitOrFail(TokenBucket.Outcome outcome, String what) {
+        if (!outcome.granted()) {
             throw new RateLimitedException(
-                    "Outbound rate limit reached for " + what, rateLimiter.retryAfterSeconds());
+                    "Outbound rate limit reached for " + what, outcome.retryAfterSeconds());
         }
     }
 

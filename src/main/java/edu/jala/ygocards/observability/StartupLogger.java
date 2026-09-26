@@ -60,8 +60,10 @@ public class StartupLogger {
         log.info("  upstream.imageBaseUrl= {}", upstream.imageBaseUrl());
         log.info("  upstream.probePath   = {}", upstream.probePath());
         log.info("  upstream.probeTtl    = {}", upstream.probeTtl());
-        log.info("  upstream.rateLimit   = {} requests/second, wait up to {} for a permit",
-                upstream.rateLimitPerSecond(), upstream.rateLimitWait());
+        log.info("  upstream.rateLimit   = search {}/s (wait {}), image {}/s (wait {}), total {}/s",
+                upstream.rateLimitSearchPerSecond(), upstream.rateLimitSearchWait(),
+                upstream.rateLimitImagePerSecond(), upstream.rateLimitImageWait(),
+                upstream.rateLimitTotalPerSecond());
         log.info("  upstream.connectTimeout = {}", upstream.connectTimeout());
         log.info("  upstream.readTimeout    = {}", upstream.readTimeout());
         log.info("  cache.cardTtl        = {} (max {} entries)", cache.cardTtl(), cache.cardMaxEntries());

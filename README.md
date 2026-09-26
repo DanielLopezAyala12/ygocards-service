@@ -263,8 +263,10 @@ directly and no deployment needs a different build.
 | `YGO_IMAGE_BASE_URL` | `https://images.ygoprodeck.com/images` | Card image root, used server side only |
 | `YGO_PROBE_PATH` | `/checkDBVer.php` | Endpoint used by the upstream health probe |
 | `UPSTREAM_PROBE_TTL` | `30s` | How long a probe result stays usable |
-| `YGO_RATE_LIMIT_PER_SECOND` | `8` | Outbound request ceiling |
-| `YGO_RATE_LIMIT_WAIT` | `500ms` | How long a request waits for a permit before 503 |
+| `YGO_RATE_LIMIT_SEARCH_PER_SECOND` | `3` | Outbound ceiling for card searches |
+| `YGO_RATE_LIMIT_SEARCH_WAIT` | `750ms` | How long a search waits for a permit before 503 |
+| `YGO_RATE_LIMIT_IMAGE_PER_SECOND` | `9` | Outbound ceiling for card images |
+| `YGO_RATE_LIMIT_IMAGE_WAIT` | `4s` | How long an image waits for a permit before 503 |
 | `YGO_CONNECT_TIMEOUT` | `3s` | Connect timeout for upstream calls |
 | `YGO_READ_TIMEOUT` | `5s` | Read timeout for upstream calls |
 | `CACHE_CARD_TTL` | `15m` | Card cache entry lifetime |
@@ -279,14 +281,65 @@ Neither file holds a secret. That is a property of the upstream API, which needs
 not a claim about this design. If one is ever added it belongs in the environment, and it must
 not appear in the configuration block the service prints at startup.
 
-### The rate limit default is not the rate limit
+### Two outbound budgets, and why not one
 
-The provider allows 20 requests per second and blocks the caller for an hour beyond that. The
-default here is 8. The margin is cheap and the penalty is not.
+The provider allows 20 requests per second and blocks the caller for an hour beyond that. This
+service spends at most 12: 3 on searches and 9 on images. The margin is cheap and the penalty is
+not.
 
-Worth stating plainly: this limiter counts requests **per instance**. Three replicas at 8 per
-second make 24 and would trigger the block. Sharing a limit across replicas needs an external
-coordinator, which is recorded as a deferred improvement rather than claimed as solved.
+The split matters more than the numbers. A search and an image are not the same class of traffic.
+One search produces one upstream call, and the page it returns then requests one image per card,
+so they stand in a ratio of about one to twenty four. A single shared counter guarantees that the
+abundant class crowds out the scarce one, and measurement confirmed it: under one shared ceiling
+every refusal in the log was an image and none was a search. That was luck rather than design.
+With a different arrival order the user would have lost the search they asked for so that images
+could load.
+
+They also deserve different patience, for a reason that has nothing to do with volume:
+
+| | Search | Image |
+|---|---|---|
+| Who asked for it | A person, directly | Derived from their search |
+| Are they watching this one | Yes | Not any particular one |
+| Cost of failure | The whole action | One card out of twenty four |
+| Retryable and cacheable | Re-runs the query | Idempotent, cached an hour |
+| Budget and patience | 3 per second, wait 750ms | 9 per second, wait 4s |
+
+A search gets a small budget that is reliably there and a short wait, because a spinner that
+hangs is worse than an honest failure. An image can afford to queue.
+
+### The limiter refills continuously, not on a tick
+
+An earlier version released a batch of permits once a second while a caller waited at most half a
+second, so whether a waiting request was served depended on where the burst landed relative to
+that tick. Measured, the same page of 24 images was refused 8 times in one run and 4 in the next.
+That is a coin flip, and a system that fails at random is harder to operate than one that fails
+predictably: it cannot be reproduced, it cannot be tuned against, and the same action succeeding
+one day and failing the next teaches an operator nothing.
+
+`TokenBucket` computes the permit count as a function of elapsed time at the moment it is asked
+for. A caller that cannot be served now is told exactly how long its turn is away, and that
+answer is the same every time for the same position in the queue.
+
+Measured before and after, with cold caches, bursting every image in a result page:
+
+| Burst | Shared ceiling of 8, tick refill | Split budgets, continuous refill |
+|---|---|---|
+| 15 images | 15 succeeded | 15 succeeded |
+| 24 images, run 1 | 16 succeeded, **8 refused** | 24 succeeded, 2020 ms |
+| 24 images, run 2 | 20 succeeded, **4 refused** | 24 succeeded, 2010 ms |
+| 24 images, run 3 | not run | 24 succeeded, 2006 ms |
+
+Three runs finishing within 14 ms of each other is the point. The delays the limiter applied form
+a ladder roughly 111 ms apart, which is one ninth of a second at 9 permits per second: the burst
+became an orderly queue instead of a scramble, and nothing was refused.
+
+### Still per instance
+
+Both budgets count inside one process. There are now two limits that are not shared between
+replicas rather than one. Two replicas at 3 and 9 would together send 24, over the provider's
+ceiling. Sharing either needs an external coordinator, and that remains deferred rather than
+solved.
 
 ---
 
@@ -313,32 +366,39 @@ having decided anything, and taking credit for that would be dishonest. It has t
 | V | Build, release, run | Two-stage `Dockerfile`: the build stage holds the JDK, the wrapper and the sources; the runtime stage holds a JRE and one jar. Image tagged `ygocards-service:0.1.0`. The running version comes from `app.version=@project.version@`, filtered from `pom.xml` at build time, so there is one source of truth for it | Configured |
 | VI | Processes | No session state, no writes to disk. Both caches are bounded by entries and by time to live (`application/CardSearchService.java`, `application/CardImageService.java`). Images are held in memory and re-served, never written (`architecture-decisions.md`, D-05) | Written |
 | VII | Port binding | Spring Boot's embedded Tomcat exports HTTP with no external server. The only contribution here is one line, `server.port=${PORT:8080}`, so that the port is a deployment decision rather than a constant | Embedded server is **Framework**; reading `PORT` is **Configured** |
-| VIII | Concurrency | One process type, declared in `Procfile` as `web:`. Capacity is added by running more containers. No singleton work and no scheduled jobs, so nothing breaks when a second instance starts. See the limitations below for what does not scale yet | Written |
+| VIII | Concurrency | One process type, declared in `Procfile` as `web:`. Capacity is added by running more containers. No singleton work and no scheduled jobs, so nothing breaks when a second instance starts. Outbound traffic is split into two budgets over a deterministic token bucket (`upstream/TokenBucket.java`, `upstream/UpstreamRateLimiter.java`), because a search and an image are different classes of traffic standing in a ratio of one to twenty four. Both budgets still count per instance | Written |
 | IX | Disposability | `server.shutdown=graceful` with `spring.lifecycle.timeout-per-shutdown-phase`. `observability/ShutdownLogger.java` makes the drain visible, since the framework prints nothing by itself. The `Dockerfile` uses exec-form `ENTRYPOINT` so the JVM is PID 1 and receives SIGTERM directly. Verified: `docker stop` produced the full drain sequence and exit code 143 | Graceful drain is **Configured**; the log line and the PID 1 arrangement are **Written** |
 | X | Dev/prod parity | The same image runs locally and anywhere else, built from the same `Dockerfile` with the same variable names. Tests exercise the real configuration path rather than a test-only one. The only environment difference is the value of the variables | Configured |
 | XI | Logs | Spring Boot writes to stdout by default, and this project adds **no file appender anywhere**. The contribution is negative and deliberate: not breaking it. What was written is the content, namely cache hits and misses, upstream latency per call, rate limiter decisions and the startup configuration block | stdout is **Framework**; the absence of a file appender is **Configured**; the log content is **Written** |
 | XII | Admin processes | `admin/AdminRunner.java` handles `--admin=upstream-check` from the same jar with the same configuration, starts no web server, and exits 0, 2 or 3. Runs as `docker run --rm --env-file .env ygocards-service:0.1.0 --admin=upstream-check` | Written |
 
-### Known limitation: request amplification against a shared ceiling
+### Two defects found by looking at the system whole
 
-One user action is not one outbound call. A search is one call, but the page then requests an
-image per card, so a single search with 24 results can produce up to 25 outbound calls against a
-ceiling of 8 per second. Measured with a cold cache: a burst of 24 image requests produced 8
-refusals in one run and 4 in another, while a burst of 15 produced none. The same action fails a
-different number of images depending on where the burst lands relative to the refill tick.
+Neither of these is visible in any single component. Both appeared only when one user action was
+followed from the click to the last outbound call, and both are written up in the configuration
+section above.
 
-The ceiling protects the provider, which is what it was for, but it distributes the cost onto the
-user unpredictably. The fix is a design decision rather than a tuning change and is still open;
-it is recorded here rather than left for a reader to discover.
+**Displacement.** One search is one upstream call, but the page then requests an image per card,
+so one action can produce 25 calls. Under a single shared ceiling the abundant class consumed the
+budget and the scarce one survived by accident. Fixed by giving searches and images separate
+budgets with separate patience.
+
+**Unpredictability.** Permits were released on a fixed one second tick while callers waited half
+a second, so success depended on where the burst landed relative to the clock. Fixed by
+continuous refill, which turns a coin flip into a queue.
+
+The general lesson, which belongs in the report rather than here: a ceiling that ignores
+amplification protects the provider and charges the user unpredictably, and it charges the
+traffic class that was requested rather than the one that is abundant.
 
 ### Deferred, with reasons
 
 | What | Factor | Why it is not here |
 |---|---|---|
 | Durable image storage in object storage | IV, VI | The correct answer is an attached resource reached through a URL in the environment. Writing images to local disk would satisfy the provider and break factor VI, so they are held in memory instead and persistence is out of scope (`architecture-decisions.md`, D-05) |
-| Shared cache and shared outbound budget across replicas | IV, VIII | Both the cache and the rate limiter count per instance. Three replicas at eight requests per second would send twenty four and trigger the provider's block. Sharing either needs an external coordinator |
+| Shared cache and shared outbound budgets across replicas | IV, VIII | Caches and both rate limit budgets count per instance. Two replicas at three searches and nine images per second would together send twenty four, over the provider's ceiling of twenty. Splitting the budget by traffic class fixed displacement inside one process; it did nothing for scaling out, which needs an external coordinator |
 | Named tunnel with a stable hostname | VII | The quick tunnel produces an address that disappears with the process, which is accepted in `architecture-decisions.md`, D-03. A named tunnel is the production form of the same arrangement |
-| A ceiling that accounts for amplification | VIII | See the limitation above. Open |
+| Byte-aware bound on the image cache | VI | The image cache is bounded by entry count, so its memory ceiling is approximate: 200 entries at roughly 150 KB is about 30 MB. A weigher would be stricter if that limit ever mattered |
 
 ---
 

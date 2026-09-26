@@ -109,7 +109,8 @@ public class UpstreamProbe {
      * check must not fail on this service's own ceiling.
      */
     private Outcome probeUnderLock() {
-        if (!rateLimiter.tryAcquire("upstream probe")) {
+        TokenBucket.Outcome permit = rateLimiter.forProbe();
+        if (!permit.granted()) {
             Result previous = last.get();
             if (previous != null) {
                 log.info("Probe skipped: no outbound permit, answering with the previous result");
