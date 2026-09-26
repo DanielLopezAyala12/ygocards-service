@@ -348,29 +348,62 @@ solved.
 This is the canonical table. The lab report quotes it rather than keeping a second copy that
 could drift.
 
-The **Source** column exists because a framework can satisfy several factors without anyone
-having decided anything, and taking credit for that would be dishonest. It has three values:
+The **Source** column exists because tooling can satisfy several factors without anyone having
+decided anything, and taking credit for that would be dishonest. It has three values:
 
-- **Framework** the behaviour comes from Spring Boot and would be there whether or not anyone
-  thought about it.
-- **Configured** a framework capability that does nothing until someone turns it on, and someone
-  did.
-- **Written** code or files produced for this project.
+- **Framework** behaviour that exists without anyone deciding anything, whether it comes from
+  Spring Boot or from the surrounding tooling.
+- **Configured** a capability that already existed but does nothing until someone turns it on or
+  points it somewhere, and someone did.
+- **Written** code, files or arrangements produced for this project.
+
+Two of those definitions are wider than they first look, deliberately. **Framework** is not
+"Spring Boot": the Maven Wrapper pins the build tool without anyone here having designed that,
+and it belongs in the same category for the same reason. **Written** is not only Java: a
+`Dockerfile` is a file written for this project, and classifying it as configuration would
+understate it.
 
 | # | Factor | Mechanism and where to find it | Source |
 |---|---|---|---|
-| I | Codebase | One Git repository. The source lives in the coursework repository under this lab folder; a public mirror carries the same code and supplies the public URL. Reasoning in `architecture-decisions.md`, D-06 | Configured |
+| I | Codebase | One Git repository. The source lives in the coursework repository under this lab folder; a public mirror carries the same code and supplies the public URL. A mirror is a second remote of one codebase, not a second codebase. Reasoning in `architecture-decisions.md`, D-06. This is an arrangement of remotes rather than a file or a setting, so the label is the closest of the three rather than a strong claim | Configured |
 | II | Dependencies | Java dependencies declared in `pom.xml`. The build tool itself pinned to 3.9.16 by the Maven Wrapper (`.mvn/wrapper/maven-wrapper.properties`). Base images pinned to exact tags in `Dockerfile`. The frontend loads **no script, stylesheet or font from any other origin**, so its run-time dependency count is zero | Wrapper is **Framework**; the manifest, the pinned tags and the zero-dependency frontend are **Written** |
 | III | Config | Every setting is `${VAR:default}` in `application.properties`, bound into records in `config/UpstreamProperties.java` and `config/CacheProperties.java`. No class calls `System.getenv` anywhere. `.env.example` documents the full surface. `observability/StartupLogger.java` prints the resolved values at startup | Binding is **Framework**; the discipline of zero direct reads, and the startup report, are **Written** |
 | IV | Backing services | The card API is reached through `YGO_API_BASE_URL` and `YGO_IMAGE_BASE_URL`, never a compiled address. The tests point the application at a fake upstream using the same property a deployment would use to select a mirror (`src/test/java/edu/jala/ygocards/FakeUpstream.java`) | Written |
-| V | Build, release, run | Two-stage `Dockerfile`: the build stage holds the JDK, the wrapper and the sources; the runtime stage holds a JRE and one jar. Image tagged `ygocards-service:0.1.0`. The running version comes from `app.version=@project.version@`, filtered from `pom.xml` at build time, so there is one source of truth for it | Configured |
+| V | Build, release, run | Three separable stages, not two. **Build**: the `Dockerfile` build stage turns sources into one jar using the JDK and the wrapper; the runtime stage keeps only the jar, so nothing needed to produce the artefact can influence what runs. **Release**: the image plus one environment, as `docker run --env-file <environment>`. It has an identity, `ygocards-service:0.1.0` together with the file that supplied its variables, and it is immutable in the way the factor means: no variable can be changed in a running container, so a configuration change produces a new container from the same image rather than mutating the old one. **Run**: the container executes that release and changes nothing about it. The running version comes from `app.version=@project.version@`, filtered from `pom.xml` at build time, so build identity has one source of truth. See the note below on where this is weakest | Written |
 | VI | Processes | No session state, no writes to disk. Both caches are bounded by entries and by time to live (`application/CardSearchService.java`, `application/CardImageService.java`). Images are held in memory and re-served, never written (`architecture-decisions.md`, D-05) | Written |
 | VII | Port binding | Spring Boot's embedded Tomcat exports HTTP with no external server. The only contribution here is one line, `server.port=${PORT:8080}`, so that the port is a deployment decision rather than a constant | Embedded server is **Framework**; reading `PORT` is **Configured** |
 | VIII | Concurrency | One process type, declared in `Procfile` as `web:`. Capacity is added by running more containers. No singleton work and no scheduled jobs, so nothing breaks when a second instance starts. Outbound traffic is split into two budgets over a deterministic token bucket (`upstream/TokenBucket.java`, `upstream/UpstreamRateLimiter.java`), because a search and an image are different classes of traffic standing in a ratio of one to twenty four. Both budgets still count per instance | Written |
 | IX | Disposability | `server.shutdown=graceful` with `spring.lifecycle.timeout-per-shutdown-phase`. `observability/ShutdownLogger.java` makes the drain visible, since the framework prints nothing by itself. The `Dockerfile` uses exec-form `ENTRYPOINT` so the JVM is PID 1 and receives SIGTERM directly. Verified: `docker stop` produced the full drain sequence and exit code 143 | Graceful drain is **Configured**; the log line and the PID 1 arrangement are **Written** |
-| X | Dev/prod parity | The same image runs locally and anywhere else, built from the same `Dockerfile` with the same variable names. Tests exercise the real configuration path rather than a test-only one. The only environment difference is the value of the variables | Configured |
+| X | Dev/prod parity | The factor names three gaps and all three are addressed below: **time** between writing and deploying, **personnel** between who writes and who deploys, and **tools** between what each environment runs. The tools gap is the one with real content here: the same image runs everywhere, built from the same `Dockerfile`, with the same variable names, and the tests exercise the real configuration path rather than a test-only one. The only difference between environments is the value of the variables | Written |
 | XI | Logs | Spring Boot writes to stdout by default, and this project adds **no file appender anywhere**. The contribution is negative and deliberate: not breaking it. What was written is the content, namely cache hits and misses, upstream latency per call, rate limiter decisions and the startup configuration block | stdout is **Framework**; the absence of a file appender is **Configured**; the log content is **Written** |
 | XII | Admin processes | `admin/AdminRunner.java` handles `--admin=upstream-check` from the same jar with the same configuration, starts no web server, and exits 0, 2 or 3. Runs as `docker run --rm --env-file .env ygocards-service:0.1.0 --admin=upstream-check` | Written |
+
+### Notes on two factors that deserve more than a table cell
+
+**Factor V: release is the weakest of the three stages.** Build and run are cleanly separated by
+the image. Release is present but thin. A release here is an image tag plus an environment file,
+and nothing records which pair was deployed when: there is no release identifier that a person
+could quote in an incident, no store of past releases, and therefore no way to roll back to a
+known configuration rather than to a known image. The immutability the factor asks for does hold,
+because a running container cannot have its environment changed and a configuration change forces
+a new one. What is missing is the bookkeeping, and the honest statement is that this project has
+build and run properly separated with release as the thinnest of the three.
+
+**Factor X: two of the three gaps are trivial here, and saying why is the point.**
+
+- **Time.** Minutes. The same person writes, builds the image and deploys it in one session, so
+  the gap the factor worries about, code sitting unshipped for weeks, cannot form. This is trivial
+  because the project is small, not because anything was designed to prevent it.
+- **Personnel.** Zero. One person writes and deploys. The failure mode the factor describes, a
+  developer who never operates what they wrote, is absent by accident of scale rather than by
+  design, and it would reappear the moment a second person joined.
+- **Tools.** This is the one that took work. The same `Dockerfile` produces the artefact for every
+  environment, the variable names are identical everywhere, and the tests drive the real
+  configuration path. There is no database, so the classic version of this gap, SQLite locally and
+  PostgreSQL in production, cannot occur here at all.
+
+Stating that two of the three are trivial is more useful than omitting them, because it separates
+what the project earned from what it got for free by being small.
 
 ### Two defects found by looking at the system whole
 
